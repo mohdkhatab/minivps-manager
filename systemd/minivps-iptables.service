@@ -1,0 +1,15 @@
+[Unit]
+Description=Ensure LXD Bridge Forwarding with Docker
+After=docker.service lxd.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/iptables -I DOCKER-USER -i lxdbr0 -j ACCEPT
+ExecStart=/sbin/iptables -I DOCKER-USER -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+ExecStart=/sbin/iptables -I FORWARD -i lxdbr0 -j ACCEPT
+ExecStart=/sbin/iptables -I FORWARD -o lxdbr0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+
+[Install]
+WantedBy=multi-user.target
