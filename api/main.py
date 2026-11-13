@@ -2,11 +2,18 @@ import os
 import json
 import secrets
 import subprocess
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Depends, HTTPException, Security, status
 from fastapi.security import APIKeyHeader, APIKeyQuery
 from pydantic import BaseModel, Field
+
+from vps_utils import (
+    get_container_bandwidth,
+    get_container_expiry,
+    enforce_limits_and_expiry,
+    format_bytes
+)
 
 CONFIG_PATH = "/etc/minivps/config.json"
 
@@ -30,8 +37,8 @@ def save_config(cfg: Dict[str, Any]) -> None:
 
 app = FastAPI(
     title="Mini VPS Management API",
-    description="All-in-One REST API to create, control, monitor and scale fully isolated Linux Mini-VPS instances with custom CPU, RAM, and Storage limits.",
-    version="2.0.0"
+    description="All-in-One REST API to create, control, monitor, set bandwidth quotas and manage lifespans for isolated Linux Mini-VPS instances.",
+    version="2.1.0"
 )
 
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
@@ -51,7 +58,7 @@ def verify_api_key(
         )
     return key
 
-# Models
+# Request Models
 class CommandRequest(BaseModel):
     command: str = Field(..., example="uname -a; free -m")
     timeout: Optional[int] = Field(30, example=30)
@@ -65,6 +72,13 @@ class UserCreateRequest(BaseModel):
     password: str = Field(..., example="DevSecurePass456!")
     is_sudo: Optional[bool] = Field(True, example=True)
 
+class RenewRequest(BaseModel):
+    days: int = Field(30, example=30, description="Number of additional days to extend")
+
+class LimitRequest(BaseModel):
+    bandwidth_limit_gb: Optional[float] = Field(None, example=100.0, description="Total data transfer quota in GB (0 for unlimited)")
+    speed_limit: Optional[str] = Field(None, example="50Mbit", description="Speed limit rate (e.g. 50Mbit, 100Mbit, or 'none')")
+
 class CreateVPSRequest(BaseModel):
     name: str = Field(..., example="client-node1")
     os_image: Optional[str] = Field("ubuntu:22.04", example="ubuntu:22.04")
@@ -74,17 +88,19 @@ class CreateVPSRequest(BaseModel):
     ssh_port: Optional[int] = Field(2223, example=2223)
     username: Optional[str] = Field("vpsadmin", example="vpsadmin")
     password: Optional[str] = Field("MiniVps#2026Pass!", example="MiniVps#2026Pass!")
+    duration_days: Optional[int] = Field(30, example=30, description="Active lifespan in days (0 for unlimited)")
+    bandwidth_limit_gb: Optional[float] = Field(100.0, example=100.0, description="Bandwidth quota in GB (0 for unlimited)")
+    speed_limit: Optional[str] = Field(None, example="100Mbit", description="Network rate limit (e.g. 50Mbit, 100Mbit)")
 
 @app.get("/")
 def home():
     conf = load_config()
     return {
         "service": "Mini VPS Management API",
-        "version": "2.0.0",
+        "version": "2.1.0",
         "public_ip": conf.get("public_ip"),
         "total_instances": len(conf.get("instances", {})),
         "docs_url": "/docs",
-        "redoc_url": "/redoc",
         "status": "online"
     }
 
@@ -94,7 +110,6 @@ def list_all_vps():
     instances = conf.get("instances", {})
     results = []
 
-    # Get live status from LXD
     proc = subprocess.run(["lxc", "list", "--format", "json"], capture_output=True, text=True)
     live_map = {}
     try:
@@ -105,6 +120,10 @@ def list_all_vps():
         pass
 
     for name, item in instances.items():
+        limit_gb = float(item.get("bandwidth_limit_gb", 0))
+        bw = get_container_bandwidth(name, limit_gb)
+        exp = get_container_expiry(item)
+
         results.append({
             "name": name,
             "status": live_map.get(name, "UNKNOWN"),
@@ -113,6 +132,19 @@ def list_all_vps():
             "storage_gb": item.get("storage_gb"),
             "ssh_port": item.get("ssh_port"),
             "default_user": item.get("default_user"),
+            "bandwidth": {
+                "used": bw.get("total_human"),
+                "limit": bw.get("limit_human"),
+                "usage_percent": bw.get("usage_percent"),
+                "is_exceeded": bw.get("is_exceeded")
+            },
+            "expiry": {
+                "duration_days": exp.get("duration_days"),
+                "expires_at": exp.get("expires_at"),
+                "days_remaining": exp.get("days_remaining"),
+                "is_expired": exp.get("is_expired"),
+                "status_label": exp.get("status_label")
+            },
             "created_at": item.get("created_at")
         })
     return {"status": "success", "instances": results}
@@ -122,18 +154,13 @@ def get_vps_info(name: str):
     conf = load_config()
     instances = conf.get("instances", {})
     if name not in instances:
-        # Fallback to single instance check if default name
-        if name == conf.get("container_name"):
-            return {
-                "name": name,
-                "public_ip": conf.get("public_ip"),
-                "ssh_port": conf.get("ssh_port", 2222),
-                "default_user": conf.get("default_user", "vpsadmin"),
-                "specs": conf.get("specs")
-            }
         raise HTTPException(status_code=404, detail=f"Mini VPS '{name}' not found.")
 
     vps = instances[name]
+    limit_gb = float(vps.get("bandwidth_limit_gb", 0))
+    bw = get_container_bandwidth(name, limit_gb)
+    exp = get_container_expiry(vps)
+
     return {
         "name": name,
         "public_ip": conf.get("public_ip"),
@@ -146,48 +173,43 @@ def get_vps_info(name: str):
             "storage_gb": vps.get("storage_gb"),
             "os": vps.get("os")
         },
+        "bandwidth": bw,
+        "expiry": exp,
         "created_at": vps.get("created_at")
     }
 
 @app.get("/api/vps/{name}/status", dependencies=[Depends(verify_api_key)])
 def get_vps_status(name: str):
     try:
-        state_proc = subprocess.run(
-            ["lxc", "info", name],
-            capture_output=True,
-            text=True,
-            check=False
-        )
+        conf = load_config()
+        vps = conf.get("instances", {}).get(name, {})
+        limit_gb = float(vps.get("bandwidth_limit_gb", 0))
+
+        state_proc = subprocess.run(["lxc", "info", name], capture_output=True, text=True, check=False)
         if state_proc.returncode != 0:
             raise HTTPException(status_code=404, detail=f"Container '{name}' not found.")
 
         is_running = "Status: RUNNING" in state_proc.stdout
+        bw = get_container_bandwidth(name, limit_gb)
+        exp = get_container_expiry(vps) if vps else {}
 
         if not is_running:
             return {
                 "name": name,
                 "status": "STOPPED",
-                "is_running": False
+                "is_running": False,
+                "bandwidth": bw,
+                "expiry": exp
             }
 
-        mem_proc = subprocess.run(
-            ["lxc", "exec", name, "--", "free", "-m"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        mem_proc = subprocess.run(["lxc", "exec", name, "--", "free", "-m"], capture_output=True, text=True, timeout=5)
         mem_lines = mem_proc.stdout.strip().split("\n")
         mem_data = mem_lines[1].split() if len(mem_lines) > 1 else []
         mem_total = int(mem_data[1]) if len(mem_data) > 1 else 0
         mem_used = int(mem_data[2]) if len(mem_data) > 2 else 0
         mem_free = int(mem_data[3]) if len(mem_data) > 3 else 0
 
-        disk_proc = subprocess.run(
-            ["lxc", "exec", name, "--", "df", "-h", "/"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        disk_proc = subprocess.run(["lxc", "exec", name, "--", "df", "-h", "/"], capture_output=True, text=True, timeout=5)
         disk_lines = disk_proc.stdout.strip().split("\n")
         disk_data = disk_lines[1].split() if len(disk_lines) > 1 else []
         disk_size = disk_data[1] if len(disk_data) > 1 else "Unknown"
@@ -195,29 +217,8 @@ def get_vps_status(name: str):
         disk_avail = disk_data[3] if len(disk_data) > 3 else "Unknown"
         disk_percent = disk_data[4] if len(disk_data) > 4 else "Unknown"
 
-        uptime_proc = subprocess.run(
-            ["lxc", "exec", name, "--", "uptime", "-p"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
+        uptime_proc = subprocess.run(["lxc", "exec", name, "--", "uptime", "-p"], capture_output=True, text=True, timeout=5)
         uptime = uptime_proc.stdout.strip()
-
-        ip_proc = subprocess.run(
-            ["lxc", "list", name, "--format", "json"],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        ip_info = []
-        try:
-            c_json = json.loads(ip_proc.stdout)
-            if c_json and len(c_json) > 0:
-                eth0 = c_json[0].get("state", {}).get("network", {}).get("eth0", {})
-                addresses = eth0.get("addresses", [])
-                ip_info = [a.get("address") for a in addresses]
-        except Exception:
-            pass
 
         return {
             "name": name,
@@ -236,13 +237,75 @@ def get_vps_status(name: str):
                 "available": disk_avail,
                 "usage_percent": disk_percent
             },
-            "internal_ips": ip_info
+            "bandwidth": bw,
+            "expiry": exp
         }
 
     except HTTPException:
         raise
     except Exception as e:
         return {"status": "error", "error": str(e)}
+
+@app.post("/api/vps/{name}/renew", dependencies=[Depends(verify_api_key)])
+def renew_vps(name: str, req: RenewRequest):
+    conf = load_config()
+    instances = conf.get("instances", {})
+    if name not in instances:
+        raise HTTPException(status_code=404, detail=f"Mini VPS '{name}' not found.")
+
+    vps = instances[name]
+    exp_str = vps.get("expires_at")
+    now = datetime.utcnow()
+
+    if exp_str:
+        try:
+            curr_exp = datetime.fromisoformat(exp_str.replace("Z", "+00:00")).replace(tzinfo=None)
+            base_date = max(now, curr_exp)
+        except Exception:
+            base_date = now
+    else:
+        base_date = now
+
+    new_exp = base_date + timedelta(days=req.days)
+    vps["expires_at"] = new_exp.isoformat() + "Z"
+    vps["duration_days"] = int(vps.get("duration_days", 0)) + req.days
+    if vps.get("suspended_reason") == "EXPIRED":
+        vps.pop("suspended_reason", None)
+        subprocess.run(["lxc", "start", name], capture_output=True)
+
+    save_config(conf)
+    return {
+        "status": "success",
+        "message": f"Mini-VPS '{name}' renewed by {req.days} days. New expiration: {vps['expires_at']}",
+        "new_expiration": vps["expires_at"]
+    }
+
+@app.post("/api/vps/{name}/limit", dependencies=[Depends(verify_api_key)])
+def update_limits(name: str, req: LimitRequest):
+    conf = load_config()
+    instances = conf.get("instances", {})
+    if name not in instances:
+        raise HTTPException(status_code=404, detail=f"Mini VPS '{name}' not found.")
+
+    vps = instances[name]
+    if req.bandwidth_limit_gb is not None:
+        vps["bandwidth_limit_gb"] = req.bandwidth_limit_gb
+        if vps.get("suspended_reason") == "BANDWIDTH_EXCEEDED":
+            bw = get_container_bandwidth(name, req.bandwidth_limit_gb)
+            if not bw.get("is_exceeded"):
+                vps.pop("suspended_reason", None)
+                subprocess.run(["lxc", "start", name], capture_output=True)
+
+    if req.speed_limit is not None:
+        if req.speed_limit.lower() in ["none", "0", "unlimited"]:
+            subprocess.run(["lxc", "config", "device", "remove", name, "eth0"], capture_output=True)
+            vps.pop("speed_limit", None)
+        else:
+            subprocess.run(["lxc", "config", "device", "override", name, "eth0", f"limits.max={req.speed_limit}"], capture_output=True)
+            vps["speed_limit"] = req.speed_limit
+
+    save_config(conf)
+    return {"status": "success", "message": f"Limits for '{name}' updated successfully.", "details": vps}
 
 @app.post("/api/vps/{name}/start", dependencies=[Depends(verify_api_key)])
 def start_vps(name: str):
@@ -304,37 +367,6 @@ def change_user_password(name: str, req: PasswordChangeRequest):
         raise HTTPException(status_code=500, detail=stderr.strip() or "Failed to change password.")
     return {"status": "success", "message": f"Password for user '{req.username}' in '{name}' updated successfully."}
 
-@app.post("/api/vps/{name}/user/create", dependencies=[Depends(verify_api_key)])
-def create_new_user(name: str, req: UserCreateRequest):
-    check = subprocess.run(["lxc", "exec", name, "--", "id", req.username], capture_output=True)
-    if check.returncode == 0:
-        raise HTTPException(status_code=400, detail=f"User '{req.username}' already exists in '{name}'.")
-
-    cmd = ["lxc", "exec", name, "--", "useradd", "-m", "-s", "/bin/bash"]
-    if req.is_sudo:
-        cmd += ["-G", "sudo"]
-    cmd.append(req.username)
-
-    res = subprocess.run(cmd, capture_output=True, text=True)
-    if res.returncode != 0:
-        raise HTTPException(status_code=500, detail=res.stderr.strip() or "Failed to create user.")
-
-    p = subprocess.Popen(
-        ["lxc", "exec", name, "--", "chpasswd"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
-    )
-    p.communicate(input=f"{req.username}:{req.password}\n")
-
-    if req.is_sudo:
-        subprocess.run(
-            ["lxc", "exec", name, "--", "bash", "-c", f'echo "{req.username} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/{req.username} && chmod 440 /etc/sudoers.d/{req.username}']
-        )
-
-    return {"status": "success", "message": f"User '{req.username}' created successfully in '{name}'."}
-
 @app.post("/api/vps/create", dependencies=[Depends(verify_api_key)])
 def create_vps_instance(req: CreateVPSRequest):
     conf = load_config()
@@ -343,15 +375,8 @@ def create_vps_instance(req: CreateVPSRequest):
         raise HTTPException(status_code=400, detail=f"Instance '{req.name}' already exists.")
 
     pool_name = f"{req.name}-pool"
-    
-    # 1. Create Btrfs storage pool with requested storage
-    subprocess.run(
-        ["lxc", "storage", "create", pool_name, "btrfs", f"size={req.storage_gb}GiB"],
-        capture_output=True,
-        text=True
-    )
+    subprocess.run(["lxc", "storage", "create", pool_name, "btrfs", f"size={req.storage_gb}GiB"], capture_output=True)
 
-    # 2. Launch LXD container with resource limits
     launch_res = subprocess.run(
         [
             "lxc", "launch", req.os_image, req.name,
@@ -365,25 +390,25 @@ def create_vps_instance(req: CreateVPSRequest):
     if launch_res.returncode != 0:
         raise HTTPException(status_code=500, detail=f"Launch failed: {launch_res.stderr.strip()}")
 
-    # 3. Add SSH port proxy
+    # Add SSH port proxy
     subprocess.run(
         [
             "lxc", "config", "device", "add", req.name, f"ssh-{req.name}", "proxy",
             f"listen=tcp:0.0.0.0:{req.ssh_port}", "connect=tcp:127.0.0.1:22"
         ],
-        capture_output=True,
-        text=True
+        capture_output=True
     )
 
-    # 4. Set boot autostart
+    if req.speed_limit:
+        subprocess.run(["lxc", "config", "device", "override", req.name, "eth0", f"limits.max={req.speed_limit}"], capture_output=True)
+
     subprocess.run(["lxc", "config", "set", req.name, "boot.autostart", "true"])
 
-    # 5. Enable password authentication
+    # Configure SSH and User
     subprocess.run(["lxc", "exec", req.name, "--", "sed", "-i", "s/^#*PasswordAuthentication.*/PasswordAuthentication yes/", "/etc/ssh/sshd_config"])
     subprocess.run(["lxc", "exec", req.name, "--", "bash", "-c", "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config.d/* 2>/dev/null || true"])
     subprocess.run(["lxc", "exec", req.name, "--", "sed", "-i", "s/^#*PermitRootLogin.*/PermitRootLogin yes/", "/etc/ssh/sshd_config"])
 
-    # 6. Create admin user
     subprocess.run(["lxc", "exec", req.name, "--", "useradd", "-m", "-s", "/bin/bash", "-G", "sudo", req.username])
     p = subprocess.Popen(["lxc", "exec", req.name, "--", "chpasswd"], stdin=subprocess.PIPE, text=True)
     p.communicate(input=f"{req.username}:{req.password}\nroot:{req.password}\n")
@@ -391,7 +416,9 @@ def create_vps_instance(req: CreateVPSRequest):
     subprocess.run(["lxc", "exec", req.name, "--", "bash", "-c", f'echo "{req.username} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/{req.username} && chmod 440 /etc/sudoers.d/{req.username}'])
     subprocess.run(["lxc", "exec", req.name, "--", "systemctl", "restart", "ssh"])
 
-    # 7. Save to config
+    now = datetime.utcnow()
+    exp_at = (now + timedelta(days=req.duration_days)).isoformat() + "Z" if req.duration_days and req.duration_days > 0 else None
+
     instances[req.name] = {
         "name": req.name,
         "os": req.os_image,
@@ -401,16 +428,25 @@ def create_vps_instance(req: CreateVPSRequest):
         "storage_pool": pool_name,
         "ssh_port": req.ssh_port,
         "default_user": req.username,
-        "created_at": datetime.utcnow().isoformat() + "Z"
+        "duration_days": req.duration_days or 0,
+        "bandwidth_limit_gb": req.bandwidth_limit_gb or 0.0,
+        "speed_limit": req.speed_limit or "None",
+        "created_at": now.isoformat() + "Z",
+        "expires_at": exp_at
     }
     save_config(conf)
 
     return {
         "status": "success",
-        "message": f"Mini VPS '{req.name}' created and started successfully.",
+        "message": f"Mini VPS '{req.name}' created successfully.",
         "details": instances[req.name],
         "ssh_command": f"ssh -p {req.ssh_port} {req.username}@{conf.get('public_ip')}"
     }
+
+@app.post("/api/vps/auto-clean", dependencies=[Depends(verify_api_key)])
+def trigger_auto_clean(delete_expired: bool = False):
+    result = enforce_limits_and_expiry(delete_expired=delete_expired)
+    return {"status": "success", "summary": result}
 
 @app.delete("/api/vps/{name}", dependencies=[Depends(verify_api_key)])
 def delete_vps_instance(name: str):
@@ -422,11 +458,9 @@ def delete_vps_instance(name: str):
     vps = instances[name]
     pool = vps.get("storage_pool")
 
-    # Stop and delete container
     subprocess.run(["lxc", "stop", name, "--force"], capture_output=True)
     subprocess.run(["lxc", "delete", name], capture_output=True)
 
-    # Delete storage pool if dedicated
     if pool and pool != "default":
         subprocess.run(["lxc", "storage", "delete", pool], capture_output=True)
 

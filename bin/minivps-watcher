@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+# ==============================================================================
+#                 MINI-VPS BACKGROUND WATCHER DAEMON
+#             Checks Expiration & Bandwidth Limits Automatically
+#                   Built with ❤️ by Prime Khatab
+# ==============================================================================
+
+import sys
+import os
+
+if os.geteuid() != 0:
+    os.execvp("sudo", ["sudo", sys.executable] + sys.argv)
+
+sys.path.insert(0, '/opt/minivps-api')
+try:
+    from vps_utils import enforce_limits_and_expiry
+    res = enforce_limits_and_expiry(delete_expired=False)
+    if res.get("actions"):
+        for action in res["actions"]:
+            print(f"[Watcher Action] {action}")
+    else:
+        print(f"[Watcher] All {res.get('scanned', 0)} instances checked. Within limits.")
+except Exception as e:
+    print(f"[Watcher Error] {e}", file=sys.stderr)

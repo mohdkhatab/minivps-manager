@@ -1,0 +1,7 @@
+[Unit]
+Description=Mini-VPS Expiry & Bandwidth Quota Watcher
+After=network.target lxd.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/minivps-watcher

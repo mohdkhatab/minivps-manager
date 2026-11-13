@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
-#                  MINI VPS MANAGER - CLI & INTERACTIVE TUI
-#              Created & Managed for: High-Performance Multi-VPS
+#                      PRIME KHATAB SERVICES • MINI-VPS
+#                   Built with ❤️ by Prime Khatab
+#       Customizable Virtualization, Bandwidth Quotas & Expiry Lifecycle
 # ==============================================================================
 
 set -e
@@ -16,14 +17,6 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 CONFIG="/etc/minivps/config.json"
-
-check_root_or_sudo() {
-    if [ "$EUID" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
-        echo -e "${RED}[Error] This script requires root or sudo privileges.${NC}"
-        exit 1
-    fi
-}
-
 SUDO_CMD=""
 if [ "$EUID" -ne 0 ]; then
     SUDO_CMD="sudo"
@@ -61,23 +54,58 @@ show_header() {
         pub_ip=$(get_public_ip)
     fi
     echo -e "${CYAN}=================================================================${NC}"
-    echo -e "${GREEN}${BOLD}                     MINI-VPS MANAGER SUITE                      ${NC}"
-    echo -e "${YELLOW}           Customizable Virtual Environment & REST API           ${NC}"
+    echo -e "${GREEN}${BOLD}                     PRIME KHATAB SERVICES                       ${NC}"
+    echo -e "${YELLOW}               Mini-VPS Virtualization & Cloud Manager           ${NC}"
+    echo -e "${MAGENTA}                    Built with ❤️ by Prime Khatab                 ${NC}"
     echo -e "${BLUE}-----------------------------------------------------------------${NC}"
     echo -e " ${MAGENTA}Host Public IPv4 :${NC} ${GREEN}${pub_ip}${NC}"
-    echo -e " ${MAGENTA}Virtualization   :${NC} LXD System Containers (Zero-Overhead)"
-    echo -e " ${MAGENTA}REST API Service :${NC} Active (Port $(get_config_val '.api_port' || echo "8090"))"
+    echo -e " ${MAGENTA}Virtualization   :${NC} LXD Zero-Overhead System Containers"
+    echo -e " ${MAGENTA}REST API Daemon  :${NC} Active (Port $(get_config_val '.api_port' || echo "8090"))"
     echo -e "${CYAN}=================================================================${NC}"
 }
 
 cmd_list() {
-    echo -e "${CYAN}--- Active Mini-VPS Instances ---${NC}"
-    $SUDO_CMD lxc list -c ns46tS
+    local api_key
+    api_key=$(get_config_val '.api_key')
+    local api_port
+    api_port=$(get_config_val '.api_port' || echo "8090")
+
+    if curl -s -f "http://127.0.0.1:$api_port/api/vps/list" -H "X-API-Key: $api_key" >/dev/null 2>&1; then
+        echo -e "${CYAN}----------------------------------------------------------------------------------------------------${NC}"
+        printf "${BOLD}%-15s %-10s %-8s %-12s %-20s %-16s %-14s${NC}\n" "INSTANCE" "STATUS" "PORT" "SPECS" "BANDWIDTH (USED/LIM)" "EXPIRY / REMAIN" "USER"
+        echo -e "${CYAN}----------------------------------------------------------------------------------------------------${NC}"
+        
+        python3 -c "
+import json, urllib.request
+req = urllib.request.Request('http://127.0.0.1:$api_port/api/vps/list', headers={'X-API-Key': '$api_key'})
+try:
+    with urllib.request.urlopen(req, timeout=3) as res:
+        data = json.loads(res.read().decode())
+        for v in data.get('instances', []):
+            name = v.get('name', '')
+            st = v.get('status', '')
+            port = str(v.get('ssh_port', ''))
+            specs = f\"{v.get('cpu')}c/{v.get('ram')}/{v.get('storage_gb')}G\"
+            bw = f\"{v.get('bandwidth',{}).get('used','0B')} / {v.get('bandwidth',{}).get('limit','Unlimited')}\"
+            exp = v.get('expiry',{}).get('status_label','Unlimited')
+            usr = v.get('default_user','')
+            color = '\033[1;32m' if st.lower() == 'running' else '\033[1;31m'
+            nc = '\033[0m'
+            print(f\"{name:<15} {color}{st:<10}{nc} {port:<8} {specs:<12} {bw:<20} {exp:<16} {usr:<14}\")
+except Exception as e:
+    print('Failed to parse API list:', e)
+"
+        echo -e "${CYAN}----------------------------------------------------------------------------------------------------${NC}"
+    else
+        echo -e "${YELLOW}[*] Querying LXD direct instance list...${NC}"
+        $SUDO_CMD lxc list -c ns46tS
+    fi
 }
 
 cmd_create() {
     echo -e "${CYAN}=================================================================${NC}"
-    echo -e "${GREEN}${BOLD}              CREATE NEW CUSTOM MINI-VPS INSTANCE                ${NC}"
+    echo -e "${GREEN}${BOLD}           CREATE CUSTOM MINI-VPS (QUOTA & LIFECYCLE)            ${NC}"
+    echo -e "${MAGENTA}                    Built with ❤️ by Prime Khatab                 ${NC}"
     echo -e "${CYAN}=================================================================${NC}"
 
     local vps_name="$1"
@@ -88,14 +116,15 @@ cmd_create() {
     local vps_port="$6"
     local vps_user="$7"
     local vps_pass="$8"
+    local vps_days="$9"
+    local vps_bw="${10}"
+    local vps_speed="${11}"
 
-    # Interactive prompts if arguments omitted
     if [ -z "$vps_name" ]; then
-        read -rp " 1. Mini-VPS Instance Name [e.g. node1, minivps, client1]: " vps_name
+        read -rp " 1. Mini-VPS Instance Name [e.g. node1, client-vps]: " vps_name
         vps_name=${vps_name:-"minivps-$(date +%s | tail -c 4)"}
     fi
 
-    # Check if instance already exists
     if $SUDO_CMD lxc info "$vps_name" >/dev/null 2>&1; then
         echo -e "${RED}[Error] Instance '$vps_name' already exists!${NC}"
         return 1
@@ -129,7 +158,7 @@ cmd_create() {
     fi
 
     if [ -z "$vps_disk" ]; then
-        read -rp " 4. Dedicated Storage Limit in GB [Default: 32]: " vps_disk
+        read -rp " 4. Dedicated Storage Quota in GB [Default: 32]: " vps_disk
         vps_disk=${vps_disk:-32}
     fi
 
@@ -148,8 +177,23 @@ cmd_create() {
         vps_pass=${vps_pass:-"MiniVps#$(date +%Y)!"}
     fi
 
+    if [ -z "$vps_days" ]; then
+        read -rp " 8. Duration Lifespan in Days [Default: 30, 0 for Unlimited]: " vps_days
+        vps_days=${vps_days:-30}
+    fi
+
+    if [ -z "$vps_bw" ]; then
+        read -rp " 9. Bandwidth Quota Limit in GB [Default: 100, 0 for Unlimited]: " vps_bw
+        vps_bw=${vps_bw:-100}
+    fi
+
+    if [ -z "$vps_speed" ]; then
+        read -rp " 10. Bandwidth Speed Rate Limit [e.g. 50Mbit, 100Mbit, or None]: " vps_speed
+        vps_speed=${vps_speed:-"None"}
+    fi
+
     echo ""
-    echo -e "${YELLOW}[*] Creating Storage Pool '${vps_name}-pool' (${vps_disk}GB)...${NC}"
+    echo -e "${YELLOW}[*] Allocating Dedicated Storage Pool '${vps_name}-pool' (${vps_disk}GB)...${NC}"
     $SUDO_CMD lxc storage create "${vps_name}-pool" btrfs size="${vps_disk}GiB" 2>/dev/null || true
 
     echo -e "${YELLOW}[*] Launching Instance '$vps_name' with $vps_cpu CPUs and ${vps_ram}GB RAM...${NC}"
@@ -158,20 +202,23 @@ cmd_create() {
         -c limits.cpu="$vps_cpu" \
         -c limits.memory="${vps_ram}GiB"
 
-    echo -e "${YELLOW}[*] Configuring External SSH Proxy on Port $vps_port...${NC}"
+    echo -e "${YELLOW}[*] Mapping External SSH Port $vps_port -> 22...${NC}"
     $SUDO_CMD lxc config device add "$vps_name" "ssh-$vps_name" proxy \
         listen="tcp:0.0.0.0:$vps_port" connect="tcp:127.0.0.1:22"
 
-    echo -e "${YELLOW}[*] Setting Autostart on Boot...${NC}"
+    if [ "$vps_speed" != "None" ] && [ "$vps_speed" != "0" ]; then
+        echo -e "${YELLOW}[*] Setting Network Speed Limit to $vps_speed...${NC}"
+        $SUDO_CMD lxc config device override "$vps_name" eth0 limits.max="$vps_speed" 2>/dev/null || true
+    fi
+
     $SUDO_CMD lxc config set "$vps_name" boot.autostart true
 
-    echo -e "${YELLOW}[*] Configuring User '$vps_user' and SSH Password Authentication...${NC}"
+    echo -e "${YELLOW}[*] Provisioning User '$vps_user' & Password Authentication...${NC}"
     sleep 3
     $SUDO_CMD lxc exec "$vps_name" -- sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication yes/' /etc/ssh/sshd_config 2>/dev/null || true
     $SUDO_CMD lxc exec "$vps_name" -- bash -c "sed -i 's/PasswordAuthentication no/PasswordAuthentication yes/' /etc/ssh/sshd_config.d/* 2>/dev/null || true"
     $SUDO_CMD lxc exec "$vps_name" -- sed -i 's/^#*PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config 2>/dev/null || true
 
-    # User creation
     $SUDO_CMD lxc exec "$vps_name" -- useradd -m -s /bin/bash -G sudo "$vps_user" 2>/dev/null || true
     echo "$vps_user:$vps_pass" | $SUDO_CMD lxc exec "$vps_name" -- chpasswd 2>/dev/null || true
     echo "root:$vps_pass" | $SUDO_CMD lxc exec "$vps_name" -- chpasswd 2>/dev/null || true
@@ -179,27 +226,38 @@ cmd_create() {
     $SUDO_CMD lxc exec "$vps_name" -- bash -c "echo '$vps_user ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/$vps_user && chmod 440 /etc/sudoers.d/$vps_user" 2>/dev/null || true
     $SUDO_CMD lxc exec "$vps_name" -- systemctl restart ssh 2>/dev/null || true
 
-    # Update config JSON
     local pub_ip
     pub_ip=$(get_public_ip)
     $SUDO_CMD python3 -c "
 import json, os
+from datetime import datetime, timedelta
+
 cfg_path = '$CONFIG'
 os.makedirs(os.path.dirname(cfg_path), exist_ok=True)
 data = {}
 if os.path.exists(cfg_path):
     with open(cfg_path) as f:
         data = json.load(f)
+
 instances = data.setdefault('instances', {})
+now = datetime.utcnow()
+days = int('$vps_days')
+exp_str = (now + timedelta(days=days)).isoformat() + 'Z' if days > 0 else None
+
 instances['$vps_name'] = {
     'name': '$vps_name',
     'os': '$vps_os',
-    'cpu': $vps_cpu,
+    'cpu': int('$vps_cpu'),
     'ram': '${vps_ram}GiB',
-    'storage_gb': $vps_disk,
+    'storage_gb': int('$vps_disk'),
     'storage_pool': '${vps_name}-pool',
-    'ssh_port': $vps_port,
-    'default_user': '$vps_user'
+    'ssh_port': int('$vps_port'),
+    'default_user': '$vps_user',
+    'duration_days': days,
+    'bandwidth_limit_gb': float('$vps_bw'),
+    'speed_limit': '$vps_speed',
+    'created_at': now.isoformat() + 'Z',
+    'expires_at': exp_str
 }
 data['public_ip'] = '$pub_ip'
 if not data.get('default_instance'):
@@ -212,60 +270,75 @@ os.chmod(cfg_path, 0o644)
     echo ""
     echo -e "${GREEN}=================================================================${NC}"
     echo -e "${GREEN}${BOLD}           [✓] MINI-VPS INSTANCE CREATED SUCCESSFULLY!           ${NC}"
+    echo -e "${MAGENTA}                    Built with ❤️ by Prime Khatab                 ${NC}"
     echo -e "${GREEN}=================================================================${NC}"
-    echo -e " ${YELLOW}Instance Name :${NC} $vps_name"
-    echo -e " ${YELLOW}Public IP     :${NC} $pub_ip"
-    echo -e " ${YELLOW}SSH Port      :${NC} $vps_port"
-    echo -e " ${YELLOW}Username      :${NC} $vps_user (or root)"
-    echo -e " ${YELLOW}Password      :${NC} $vps_pass"
-    echo -e " ${YELLOW}Specs         :${NC} ${vps_cpu} CPU(s) | ${vps_ram}GB RAM | ${vps_disk}GB Storage"
+    echo -e " ${YELLOW}Instance Name   :${NC} $vps_name"
+    echo -e " ${YELLOW}Host Public IP  :${NC} $pub_ip"
+    echo -e " ${YELLOW}SSH Port        :${NC} $vps_port"
+    echo -e " ${YELLOW}Username        :${NC} $vps_user (or root)"
+    echo -e " ${YELLOW}Password        :${NC} $vps_pass"
+    echo -e " ${YELLOW}Specifications  :${NC} ${vps_cpu} CPU(s) | ${vps_ram}GB RAM | ${vps_disk}GB Storage"
+    echo -e " ${YELLOW}Lifespan (Days) :${NC} ${vps_days} days $([ "$vps_days" -eq 0 ] && echo "(Unlimited)" || echo "")"
+    echo -e " ${YELLOW}Bandwidth Quota :${NC} ${vps_bw} GB $([ "$vps_bw" -eq 0 ] && echo "(Unlimited)" || echo "")"
+    echo -e " ${YELLOW}Speed Rate      :${NC} $vps_speed"
     echo -e "${CYAN}-----------------------------------------------------------------${NC}"
-    echo -e " ${YELLOW}SSH Connect   :${NC} ${GREEN}ssh -p $vps_port $vps_user@$pub_ip${NC}"
-    echo -e " ${YELLOW}Shell Connect :${NC} minivps shell $vps_name"
+    echo -e " ${YELLOW}SSH Connect     :${NC} ${GREEN}ssh -p $vps_port $vps_user@$pub_ip${NC}"
+    echo -e " ${YELLOW}Direct Shell    :${NC} minivps shell $vps_name"
     echo -e "${GREEN}=================================================================${NC}"
 }
 
 cmd_info() {
     local target="${1:-$(get_default_instance)}"
-    local pub_ip
-    pub_ip=$(get_config_val '.public_ip')
-    if [ -z "$pub_ip" ]; then pub_ip=$(get_public_ip); fi
     local api_key
     api_key=$(get_config_val '.api_key')
     local api_port
     api_port=$(get_config_val '.api_port' || echo "8090")
 
-    local ssh_port
-    ssh_port=$(get_config_val ".instances.\"$target\".ssh_port")
-    if [ -z "$ssh_port" ]; then ssh_port="2222"; fi
-
-    local def_user
-    def_user=$(get_config_val ".instances.\"$target\".default_user")
-    if [ -z "$def_user" ]; then def_user="vpsadmin"; fi
-
-    local cpu
-    cpu=$(get_config_val ".instances.\"$target\".cpu")
-    local ram
-    ram=$(get_config_val ".instances.\"$target\".ram")
-    local disk
-    disk=$(get_config_val ".instances.\"$target\".storage_gb")
-
-    echo -e "${CYAN}=================================================================${NC}"
-    echo -e "${GREEN}${BOLD}               MINI-VPS DETAILS: ${YELLOW}$target${NC}"
-    echo -e "${CYAN}=================================================================${NC}"
-    echo -e " ${YELLOW}Instance Name  :${NC} $target"
-    echo -e " ${YELLOW}Host Public IP :${NC} $pub_ip"
-    echo -e " ${YELLOW}SSH Port       :${NC} $ssh_port"
-    echo -e " ${YELLOW}Username       :${NC} $def_user (or root)"
-    echo -e " ${YELLOW}Specifications :${NC} ${cpu:-2} vCPUs | ${ram:-4GB} RAM | ${disk:-32}GB Storage"
-    echo -e "${BLUE}-----------------------------------------------------------------${NC}"
-    echo -e " ${YELLOW}SSH Command    :${NC} ${GREEN}ssh -p $ssh_port $def_user@$pub_ip${NC}"
-    echo -e " ${YELLOW}Direct Shell   :${NC} minivps shell $target"
-    echo -e "${BLUE}-----------------------------------------------------------------${NC}"
-    echo -e " ${YELLOW}REST API Base  :${NC} http://$pub_ip:$api_port"
-    echo -e " ${YELLOW}Swagger Docs   :${NC} http://$pub_ip:$api_port/docs"
-    echo -e " ${YELLOW}API Key        :${NC} ${GREEN}$api_key${NC}"
-    echo -e "${CYAN}=================================================================${NC}"
+    if curl -s -f "http://127.0.0.1:$api_port/api/vps/$target/info" -H "X-API-Key: $api_key" >/dev/null 2>&1; then
+        python3 -c "
+import json, urllib.request
+req = urllib.request.Request('http://127.0.0.1:$api_port/api/vps/$target/info', headers={'X-API-Key': '$api_key'})
+try:
+    with urllib.request.urlopen(req, timeout=3) as res:
+        d = json.loads(res.read().decode())
+        name = d.get('name')
+        ip = d.get('public_ip')
+        port = d.get('ssh_port')
+        usr = d.get('default_user')
+        cmd = d.get('ssh_command')
+        specs = d.get('specs', {})
+        bw = d.get('bandwidth', {})
+        exp = d.get('expiry', {})
+        
+        print('\033[1;36m=================================================================\033[0m')
+        print(f'\033[1;32m\033[1m              MINI-VPS COMPLETE DETAILS: \033[1;33m{name}\033[0m')
+        print('\033[1;35m                    Built with ❤️ by Prime Khatab                 \033[0m')
+        print('\033[1;36m=================================================================\033[0m')
+        print(f' \033[1;33mInstance Name   :\033[0m {name}')
+        print(f' \033[1;33mHost Public IP  :\033[0m {ip}')
+        print(f' \033[1;33mSSH Port        :\033[0m {port}')
+        print(f' \033[1;33mAdmin Username  :\033[0m {usr} (or root)')
+        print(f' \033[1;33mHardware Specs  :\033[0m {specs.get(\"cpu\")} vCPUs | {specs.get(\"ram\")} RAM | {specs.get(\"storage_gb\")}GB Storage')
+        print(f' \033[1;33mOS Distribution :\033[0m {specs.get(\"os\")}')
+        print('\033[1;34m-----------------------------------------------------------------\033[0m')
+        print(f' \033[1;35mBandwidth Consumed :\033[0m \033[1;32m{bw.get(\"total_human\")}\033[0m (RX: {bw.get(\"rx_human\")}, TX: {bw.get(\"tx_human\")})')
+        print(f' \033[1;35mBandwidth Quota    :\033[0m {bw.get(\"limit_human\")} ({bw.get(\"usage_percent\", 0)}% used)')
+        print(f' \033[1;35mBandwidth Left     :\033[0m {bw.get(\"remaining_human\")}')
+        print('\033[1;34m-----------------------------------------------------------------\033[0m')
+        print(f' \033[1;33mLifespan Created   :\033[0m {exp.get(\"created_at\")}')
+        print(f' \033[1;33mExpiration Date    :\033[0m {exp.get(\"expires_at\")}')
+        print(f' \033[1;33mDays Remaining     :\033[0m \033[1;32m{exp.get(\"status_label\")}\033[0m')
+        print('\033[1;34m-----------------------------------------------------------------\033[0m')
+        print(f' \033[1;33mSSH Connection     :\033[0m \033[1;32m{cmd}\033[0m')
+        print(f' \033[1;33mDirect Shell       :\033[0m minivps shell {name}')
+        print(f' \033[1;33mREST API Endpoint  :\033[0m http://{ip}:$api_port/api/vps/{name}/status')
+        print('\033[1;36m=================================================================\033[0m')
+except Exception as e:
+    print('Failed to load info:', e)
+"
+    else
+        echo -e "${RED}[Error] Could not retrieve info for '$target'. Check if API is running.${NC}"
+    fi
 }
 
 cmd_status() {
@@ -274,13 +347,70 @@ cmd_status() {
     api_key=$(get_config_val '.api_key')
     local api_port
     api_port=$(get_config_val '.api_port' || echo "8090")
-    
+
     if curl -s -f "http://127.0.0.1:$api_port/api/vps/$target/status" -H "X-API-Key: $api_key" >/dev/null 2>&1; then
         curl -s -H "X-API-Key: $api_key" "http://127.0.0.1:$api_port/api/vps/$target/status" | jq .
     else
-        echo -e "${YELLOW}[*] Querying LXD directly for '$target'...${NC}"
         $SUDO_CMD lxc info "$target"
     fi
+}
+
+cmd_renew() {
+    local target="${1:-$(get_default_instance)}"
+    local days="$2"
+    if [ -z "$days" ]; then
+        read -rp "Enter number of days to extend for '$target' [e.g. 30]: " days
+        days=${days:-30}
+    fi
+
+    local api_key
+    api_key=$(get_config_val '.api_key')
+    local api_port
+    api_port=$(get_config_val '.api_port' || echo "8090")
+
+    echo -e "${YELLOW}[*] Extending lifespan of '$target' by $days days...${NC}"
+    curl -s -X POST -H "X-API-Key: $api_key" -H "Content-Type: application/json" \
+         -d "{\"days\": $days}" \
+         "http://127.0.0.1:$api_port/api/vps/$target/renew" | jq .
+}
+
+cmd_set_limit() {
+    local target="${1:-$(get_default_instance)}"
+    local quota_gb="$2"
+    local speed="$3"
+
+    if [ -z "$quota_gb" ]; then
+        read -rp "Enter new Bandwidth Quota in GB [e.g. 200, 0 for Unlimited]: " quota_gb
+    fi
+    if [ -z "$speed" ]; then
+        read -rp "Enter Speed Rate Limit [e.g. 50Mbit, 100Mbit, or none]: " speed
+    fi
+
+    local api_key
+    api_key=$(get_config_val '.api_key')
+    local api_port
+    api_port=$(get_config_val '.api_port' || echo "8090")
+
+    curl -s -X POST -H "X-API-Key: $api_key" -H "Content-Type: application/json" \
+         -d "{\"bandwidth_limit_gb\": $quota_gb, \"speed_limit\": \"$speed\"}" \
+         "http://127.0.0.1:$api_port/api/vps/$target/limit" | jq .
+}
+
+cmd_auto_clean() {
+    local del_mode="$1"
+    local is_del="false"
+    if [ "$del_mode" = "--delete" ] || [ "$del_mode" = "-d" ]; then
+        is_del="true"
+        echo -e "${RED}[!] WARNING: Permanent deletion mode active for expired instances.${NC}"
+    fi
+
+    local api_key
+    api_key=$(get_config_val '.api_key')
+    local api_port
+    api_port=$(get_config_val '.api_port' || echo "8090")
+
+    echo -e "${YELLOW}[*] Scanning and enforcing quotas & expiration...${NC}"
+    curl -s -X POST -H "X-API-Key: $api_key" "http://127.0.0.1:$api_port/api/vps/auto-clean?delete_expired=$is_del" | jq .
 }
 
 cmd_shell() {
@@ -321,7 +451,7 @@ cmd_delete() {
         return 1
     fi
 
-    echo -e "${RED}[!] WARNING: This will permanently delete container '$target' and all its data!${NC}"
+    echo -e "${RED}[!] WARNING: This will permanently destroy container '$target' and all its data!${NC}"
     read -rp "Are you sure? (y/N): " confirm
     if [[ "$confirm" =~ ^[Yy]$ ]]; then
         echo -e "${YELLOW}[*] Deleting container and storage pool...${NC}"
@@ -329,7 +459,6 @@ cmd_delete() {
         $SUDO_CMD lxc delete "$target" 2>/dev/null || true
         $SUDO_CMD lxc storage delete "${target}-pool" 2>/dev/null || true
 
-        # Remove from config
         $SUDO_CMD python3 -c "
 import json, os
 cfg = '$CONFIG'
@@ -376,30 +505,33 @@ cmd_api() {
 
     echo -e "${CYAN}=================================================================${NC}"
     echo -e "${GREEN}${BOLD}                    MINI-VPS REST API GUIDE                      ${NC}"
+    echo -e "${MAGENTA}                    Built with ❤️ by Prime Khatab                 ${NC}"
     echo -e "${CYAN}=================================================================${NC}"
-    echo -e " ${YELLOW}Base URL       :${NC} http://$pub_ip:$api_port"
+    echo -e " ${YELLOW}Base URL        :${NC} http://$pub_ip:$api_port"
     echo -e " ${YELLOW}Interactive Docs:${NC} http://$pub_ip:$api_port/docs"
-    echo -e " ${YELLOW}API Key        :${NC} ${GREEN}$api_key${NC}"
+    echo -e " ${YELLOW}API Key         :${NC} ${GREEN}$api_key${NC}"
     echo -e "${BLUE}-----------------------------------------------------------------${NC}"
     echo -e " ${MAGENTA}cURL Examples:${NC}"
     echo ""
-    echo -e " 1. List all instances:"
+    echo -e " 1. List all instances (with Bandwidth & Expiry):"
     echo "    curl -H \"X-API-Key: $api_key\" http://$pub_ip:$api_port/api/vps/list"
     echo ""
     echo -e " 2. Get status of '$def_target':"
     echo "    curl -H \"X-API-Key: $api_key\" http://$pub_ip:$api_port/api/vps/$def_target/status"
     echo ""
-    echo -e " 3. Restart '$def_target':"
-    echo "    curl -X POST -H \"X-API-Key: $api_key\" http://$pub_ip:$api_port/api/vps/$def_target/restart"
-    echo ""
-    echo -e " 4. Execute command inside '$def_target':"
+    echo -e " 3. Renew / Extend Duration by 30 days:"
     echo "    curl -X POST -H \"X-API-Key: $api_key\" -H \"Content-Type: application/json\" \\"
-    echo "         -d '{\"command\": \"uname -a; free -h\"}' \\"
-    echo "         http://$pub_ip:$api_port/api/vps/$def_target/exec"
+    echo "         -d '{\"days\": 30}' \\"
+    echo "         http://$pub_ip:$api_port/api/vps/$def_target/renew"
+    echo ""
+    echo -e " 4. Update Bandwidth Quota & Speed Rate:"
+    echo "    curl -X POST -H \"X-API-Key: $api_key\" -H \"Content-Type: application/json\" \\"
+    echo "         -d '{\"bandwidth_limit_gb\": 150, \"speed_limit\": \"50Mbit\"}' \\"
+    echo "         http://$pub_ip:$api_port/api/vps/$def_target/limit"
     echo ""
     echo -e " 5. Create a brand new Mini-VPS via API:"
     echo "    curl -X POST -H \"X-API-Key: $api_key\" -H \"Content-Type: application/json\" \\"
-    echo "         -d '{\"name\":\"worker1\", \"cpu\":2, \"ram_gb\":4, \"storage_gb\":32, \"ssh_port\":2225, \"username\":\"admin\", \"password\":\"Pass123!\"}' \\"
+    echo "         -d '{\"name\":\"node2\", \"cpu\":2, \"ram_gb\":4, \"storage_gb\":32, \"ssh_port\":2225, \"username\":\"admin\", \"password\":\"Pass123!\", \"duration_days\":30, \"bandwidth_limit_gb\":100}' \\"
     echo "         http://$pub_ip:$api_port/api/vps/create"
     echo -e "${CYAN}=================================================================${NC}"
 }
@@ -408,23 +540,28 @@ cmd_menu() {
     while true; do
         clear
         show_header
-        echo -e " ${YELLOW}[1]${NC}  Create New Mini-VPS ${GREEN}(Custom CPU, RAM, Disk, User, Pass)${NC}"
-        echo -e " ${YELLOW}[2]${NC}  List All Mini-VPS Instances"
-        echo -e " ${YELLOW}[3]${NC}  Mini-VPS Information & SSH Credentials"
-        echo -e " ${YELLOW}[4]${NC}  Live Status & Resource Statistics ${GREEN}(RAM/CPU/Disk)${NC}"
+        echo -e " ${YELLOW}[1]${NC}  Create New Mini-VPS ${GREEN}(Custom Specs, Bandwidth Quota, Lifespan)${NC}"
+        echo -e " ${YELLOW}[2]${NC}  List All Mini-VPS Instances ${GREEN}(Live Bandwidth & Expiry)${NC}"
+        echo -e " ${YELLOW}[3]${NC}  Mini-VPS Information & Credentials"
+        echo -e " ${YELLOW}[4]${NC}  Live Status & Resource Statistics ${GREEN}(RAM/CPU/Disk/Bandwidth)${NC}"
         echo -e " ${YELLOW}[5]${NC}  1-Click Shell Login ${GREEN}(Direct Terminal Inside VPS)${NC}"
         echo -e "${BLUE}-----------------------------------------------------------------${NC}"
         echo -e " ${YELLOW}[6]${NC}  Start Mini-VPS"
         echo -e " ${YELLOW}[7]${NC}  Stop Mini-VPS"
         echo -e " ${YELLOW}[8]${NC}  Restart Mini-VPS"
-        echo -e " ${YELLOW}[9]${NC}  Change User Password"
-        echo -e " ${YELLOW}[10]${NC} Execute Command inside Mini-VPS"
+        echo -e " ${YELLOW}[9]${NC}  Renew / Extend Mini-VPS Duration ${GREEN}(Add Days)${NC}"
+        echo -e " ${YELLOW}[10]${NC} Set / Change Bandwidth Quota & Speed Limit"
         echo -e "${BLUE}-----------------------------------------------------------------${NC}"
-        echo -e " ${YELLOW}[11]${NC} Show REST API Details & cURL Documentation"
-        echo -e " ${YELLOW}[12]${NC} Delete Mini-VPS Instance & Free Storage"
+        echo -e " ${YELLOW}[11]${NC} Change User Password"
+        echo -e " ${YELLOW}[12]${NC} Execute Command inside Mini-VPS"
+        echo -e " ${YELLOW}[13]${NC} Auto-Clean Expired Instances ${RED}(Scan / Suspend / Prune)${NC}"
+        echo -e " ${YELLOW}[14]${NC} Delete Mini-VPS Instance & Free Storage"
+        echo -e " ${YELLOW}[15]${NC} Show REST API Details & cURL Documentation"
         echo -e " ${YELLOW}[0]${NC}  Exit Menu"
         echo -e "${CYAN}=================================================================${NC}"
-        read -rp " Select Option [0-12]: " opt
+        echo -e " ${MAGENTA}Prime Khatab Services${NC} • Built with ❤️ by Prime Khatab"
+        echo -e "${CYAN}=================================================================${NC}"
+        read -rp " Select Option [0-15]: " opt
 
         case "$opt" in
             1)
@@ -475,29 +612,51 @@ cmd_menu() {
             9)
                 echo ""
                 read -rp " Enter instance name [Default: $(get_default_instance)]: " tname
-                cmd_passwd "${tname:-$(get_default_instance)}"
+                cmd_renew "${tname:-$(get_default_instance)}"
                 read -rp " Press [Enter] to continue..."
                 ;;
             10)
+                echo ""
+                read -rp " Enter instance name [Default: $(get_default_instance)]: " tname
+                cmd_set_limit "${tname:-$(get_default_instance)}"
+                read -rp " Press [Enter] to continue..."
+                ;;
+            11)
+                echo ""
+                read -rp " Enter instance name [Default: $(get_default_instance)]: " tname
+                cmd_passwd "${tname:-$(get_default_instance)}"
+                read -rp " Press [Enter] to continue..."
+                ;;
+            12)
                 echo ""
                 read -rp " Enter instance name [Default: $(get_default_instance)]: " tname
                 read -rp " Enter command to run: " cmd_run
                 $SUDO_CMD lxc exec "${tname:-$(get_default_instance)}" -- bash -c "$cmd_run"
                 read -rp " Press [Enter] to continue..."
                 ;;
-            11)
+            13)
                 echo ""
-                cmd_api
+                read -rp " Do you want to permanently delete expired instances? (y/N): " del_exp
+                if [[ "$del_exp" =~ ^[Yy]$ ]]; then
+                    cmd_auto_clean "--delete"
+                else
+                    cmd_auto_clean
+                fi
                 read -rp " Press [Enter] to continue..."
                 ;;
-            12)
+            14)
                 echo ""
                 cmd_delete
                 read -rp " Press [Enter] to continue..."
                 ;;
+            15)
+                echo ""
+                cmd_api
+                read -rp " Press [Enter] to continue..."
+                ;;
             0)
                 echo ""
-                echo -e "${GREEN}Thank you for using Mini-VPS Manager Suite!${NC}"
+                echo -e "${GREEN}Thank you for choosing Prime Khatab Services! Have a great day!${NC}"
                 break
                 ;;
             *)
@@ -508,7 +667,6 @@ cmd_menu() {
     done
 }
 
-# Main routing
 case "$1" in
     list|ls)
         cmd_list
@@ -522,6 +680,15 @@ case "$1" in
         ;;
     status)
         cmd_status "$2"
+        ;;
+    renew|extend)
+        cmd_renew "$2" "$3"
+        ;;
+    limit|set-limit)
+        cmd_set_limit "$2" "$3" "$4"
+        ;;
+    auto-clean|clean|prune)
+        cmd_auto_clean "$2"
         ;;
     shell|ssh|login)
         cmd_shell "$2"
@@ -554,25 +721,29 @@ case "$1" in
         cmd_menu
         ;;
     version|-v|--version)
-        echo "Mini-VPS Manager CLI v2.0.0"
+        echo "Prime Khatab Mini-VPS Manager CLI v2.1.0 (Built with ❤️ by Prime Khatab)"
         ;;
     help|-h|--help)
+        echo "Prime Khatab Mini-VPS Manager (Built with ❤️ by Prime Khatab)"
         echo "Usage: minivps [command] [args...]"
         echo ""
         echo "Commands:"
-        echo "  menu                      Launch interactive management TUI"
-        echo "  list                      List all active Mini-VPS instances"
-        echo "  create [name] [os] [cpu] [ram] [disk] [port] [user] [pass]  Create custom VPS"
-        echo "  info [name]               Show VPS specs, SSH command, API key"
-        echo "  status [name]             Show live CPU, RAM, Disk usage and uptime"
-        echo "  shell [name]              Instant 1-click shell into Mini-VPS"
-        echo "  start [name]              Start Mini-VPS"
-        echo "  stop [name]               Stop Mini-VPS"
-        echo "  restart [name]            Restart Mini-VPS"
-        echo "  passwd [name] [usr] [pwd] Update user password"
-        echo "  exec [name] \"command\"     Execute command inside Mini-VPS"
-        echo "  delete [name]             Delete Mini-VPS and free storage"
-        echo "  api                       Display REST API guide and examples"
+        echo "  menu                          Launch interactive management TUI"
+        echo "  list                          List all active Mini-VPS instances with bandwidth & expiry"
+        echo "  create [args...]              Provision custom Mini-VPS with bandwidth quota & lifespan"
+        echo "  info [name]                   Show detailed specs, bandwidth metrics & credentials"
+        echo "  status [name]                 Live CPU, RAM, Disk, and Bandwidth metrics"
+        echo "  renew [name] [days]           Extend lifespan duration by X days"
+        echo "  limit [name] [quota_gb] [spd] Set bandwidth quota and speed rate limit"
+        echo "  auto-clean [--delete]         Check and suspend or prune expired instances"
+        echo "  shell [name]                  Direct 1-click shell login into Mini-VPS"
+        echo "  start [name]                  Start Mini-VPS"
+        echo "  stop [name]                   Stop Mini-VPS"
+        echo "  restart [name]                Restart Mini-VPS"
+        echo "  passwd [name] [usr] [pwd]     Update user password"
+        echo "  exec [name] \"command\"         Execute command inside Mini-VPS"
+        echo "  delete [name]                 Delete Mini-VPS and free storage pool"
+        echo "  api                           Display REST API documentation and cURL examples"
         ;;
     *)
         cmd_menu

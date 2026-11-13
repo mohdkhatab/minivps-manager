@@ -1,198 +1,203 @@
-# ⚡ Mini-VPS Manager Suite
+# ⚡ Prime Khatab Mini-VPS Enterprise Manager
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform: Linux](https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian-blue.svg)](https://ubuntu.com)
-[![Virtualization: LXD](https://img.shields.io/badge/Engine-LXD%20Containers-green.svg)](https://ubuntu.com/lxd)
-[![API: FastAPI](https://img.shields.io/badge/API-FastAPI%20REST-009688.svg)](https://fastapi.tiangolo.com)
-[![Author: Mohd Khatab](https://img.shields.io/badge/Author-Mohd%20Khatab-orange.svg)](https://github.com/mohdkhatab)
+<p align="center">
+  <b>Built with ❤️ by Prime Khatab</b><br>
+  <i>All-in-One Zero-Overhead Virtualization, Bandwidth Quotas & Expiry Lifecycle Suite</i>
+</p>
 
-**Mini-VPS Manager Suite** is an enterprise-grade, zero-overhead virtualization management tool and REST API that allows you to partition any Linux VPS or Dedicated Server into multiple, fully isolated, customizable **Mini-VPS** instances.
-
-Each Mini-VPS behaves exactly like a standalone cloud VPS (DigitalOcean / AWS / Linode instance) with its own **init system (systemd), independent root filesystem, dedicated CPU cores, RAM limits, isolated Btrfs storage quotas, custom SSH port, independent root/sudo credentials, and full REST API control**.
-
----
-
-## 🌟 Key Highlights / Khasiyatain
-
-* 🚀 **1-Click Zero-Touch Setup:** Complete automated installation in under 60 seconds.
-* 🎛️ **100% Customizable Virtualization:**
-  * Custom **Instance Name** (e.g. `client1`, `node-2`, `worker`).
-  * Custom **CPU Cores Allocation** (1, 2, 4, 8 cores).
-  * Custom **RAM Allocation** (1GB, 2GB, 4GB, 8GB, 16GB, etc.).
-  * Dedicated **Storage Limit** via Btrfs quotas (10GB, 20GB, 32GB, 50GB, etc.).
-  * Custom **External SSH Port** (e.g., 2222, 2223, 2224).
-  * Independent **Username & Password** with sudo root access.
-  * Multi-OS support: Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, Debian 12, Debian 11, Alpine Linux.
-* 🌐 **REST API & Swagger UI:** Control VPS instances programmatically via REST API (`/api/vps/status`, `/exec`, `/start`, `/stop`, `/restart`, `/create`, `/delete`) with interactive Swagger docs at `http://<IP>:8090/docs`.
-* 🖥️ **Interactive Terminal TUI Menu:** Beautiful color menu (`minivps menu`) for easy 1-click management.
-* 🐳 **Docker Coexistence:** Automatic iptables routing that prevents Docker from blocking LXD bridge traffic.
-* 🔄 **Persistent on Boot:** Autostart support for both the containers and the management API service.
+<p align="center">
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="https://ubuntu.com"><img src="https://img.shields.io/badge/Platform-Ubuntu%20%7C%20Debian-blue.svg" alt="Platform"></a>
+  <a href="https://ubuntu.com/lxd"><img src="https://img.shields.io/badge/Engine-LXD%20Containers-green.svg" alt="Engine"></a>
+  <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/API-FastAPI%20REST%20v2.1-009688.svg" alt="API"></a>
+  <a href="https://github.com/mohdkhatab"><img src="https://img.shields.io/badge/Developer-Prime%20Khatab%20%E2%9D%A4%EF%B8%8F-ff69b4.svg" alt="Developer"></a>
+</p>
 
 ---
 
-## ⚡ Quick 1-Line Installation
+## 🚀 Overview
 
-Run this command on your VPS as `root` or with `sudo`:
+**Prime Khatab Mini-VPS Manager** is a high-performance Linux virtualization management platform and REST API suite developed by **Prime Khatab**. It allows administrators and users to partition any Linux VPS or Dedicated Server into multiple, fully isolated, production-ready **Mini-VPS** environments.
+
+Each Mini-VPS operates with **its own dedicated CPU cores, RAM limits, isolated Btrfs storage quotas, custom SSH port, independent root/sudo credentials, bandwidth traffic monitoring, bandwidth rate limits, automatic expiration lifecycle, and complete REST API control**.
+
+---
+
+## ✨ Key Features
+
+* 💎 **Branded for Excellence:** Built with ❤️ by Prime Khatab.
+* ⚡ **Zero-Touch 1-Click Install:** 100% automated installation with single command.
+* 📊 **Real-Time Bandwidth Engine:**
+  * Tracks exact Bytes received (RX), sent (TX), and total data transfer consumed.
+  * Real-time metrics in MB and GB with persistent cumulative counter across restarts.
+  * **Bandwidth Quotas:** Admin can set total data transfer limits (e.g. 50GB, 100GB, 500GB).
+  * **Speed Rate Limits:** Admin can throttle network speed (e.g. 50Mbit, 100Mbit).
+  * **Automatic Suspension:** Suspends instances that exceed their bandwidth quota.
+* ⏳ **Duration & Expiry Lifecycle Engine:**
+  * Set active lifespan in days (e.g., 7 days, 30 days, 90 days, or unlimited).
+  * Auto-tracks creation date, expiration timestamp, and days remaining.
+  * **Renewal System:** Renew / extend duration with a single command (`pk renew <name> <days>`).
+  * **Auto-Cleaner:** Automatic background timer checks and suspends/prunes expired instances every 10 minutes.
+* 🎛️ **Full Customization on Creation:**
+  * Custom instance name
+  * OS distribution (Ubuntu 22.04 LTS, Ubuntu 24.04 LTS, Debian 12, Debian 11, Alpine Linux 3.19)
+  * CPU cores allocation
+  * RAM limits (1GB, 2GB, 4GB, 8GB, etc.)
+  * Storage quota via dedicated Btrfs loop pools (10GB, 20GB, 32GB, 50GB, etc.)
+  * Custom external SSH port (e.g. 2222, 2223, 2224)
+  * Custom admin username and password with full password-less sudo
+* ⌨️ **Instant Short Commands:** Run `pk`, `vps`, `mvps`, or `minivps` anywhere in your terminal.
+* 🌐 **REST API with OpenAPI / Swagger UI:** Full programmatic control at `http://<IP>:8090/docs`.
+* 🐳 **Docker Coexistence:** Automatic iptables routing prevents Docker from blocking LXD bridge traffic.
+
+---
+
+## ⚡ 1-Click Automated Setup
+
+Run this single command on your VPS as `root` or with `sudo`:
 
 ```bash
 curl -sSL https://raw.githubusercontent.com/mohdkhatab/minivps-manager/main/install.sh | sudo bash
 ```
 
-Once installed, simply type:
+Once installed, simply type any of the short commands:
 ```bash
+pk
+# ya
+vps
+# ya
+mvps
+# ya
 minivps
 ```
 
 ---
 
-## 🛠️ Interactive Management Menu
-
-Launch the interactive control menu at any time:
-
-```bash
-minivps menu
-```
+## 🖥️ Interactive TUI Control Menu (`pk` / `vps`)
 
 ```text
 =================================================================
-                     MINI-VPS MANAGER SUITE                      
-           Customizable Virtual Environment & REST API           
+                     PRIME KHATAB SERVICES                       
+               Mini-VPS Virtualization & Cloud Manager           
+                    Built with ❤️ by Prime Khatab                 
 -----------------------------------------------------------------
  Host Public IPv4 : 18.118.50.137
- Virtualization   : LXD System Containers (Zero-Overhead)
- REST API Service : Active (Port 8090)
+ Virtualization   : LXD Zero-Overhead System Containers
+ REST API Daemon  : Active (Port 8090)
 =================================================================
- [1]  Create New Mini-VPS (Custom CPU, RAM, Disk, User, Pass)
- [2]  List All Mini-VPS Instances
- [3]  Mini-VPS Information & SSH Credentials
- [4]  Live Status & Resource Statistics (RAM/CPU/Disk)
+ [1]  Create New Mini-VPS (Custom Specs, Bandwidth Quota, Lifespan)
+ [2]  List All Mini-VPS Instances (Live Bandwidth & Expiry)
+ [3]  Mini-VPS Information & Credentials
+ [4]  Live Status & Resource Statistics (RAM/CPU/Disk/Bandwidth)
  [5]  1-Click Shell Login (Direct Terminal Inside VPS)
 -----------------------------------------------------------------
  [6]  Start Mini-VPS
  [7]  Stop Mini-VPS
  [8]  Restart Mini-VPS
- [9]  Change User Password
- [10] Execute Command inside Mini-VPS
+ [9]  Renew / Extend Mini-VPS Duration (Add Days)
+ [10] Set / Change Bandwidth Quota & Speed Limit
 -----------------------------------------------------------------
- [11] Show REST API Details & cURL Documentation
- [12] Delete Mini-VPS Instance & Free Storage
+ [11] Change User Password
+ [12] Execute Command inside Mini-VPS
+ [13] Auto-Clean Expired Instances (Scan / Suspend / Prune)
+ [14] Delete Mini-VPS Instance & Free Storage
+ [15] Show REST API Details & cURL Documentation
  [0]  Exit Menu
+=================================================================
+ Prime Khatab Services • Built with ❤️ by Prime Khatab
 =================================================================
 ```
 
 ---
 
-## 💻 CLI Command Reference
+## ⌨️ CLI Command Cheat Sheet
 
-You can also run direct CLI commands without entering the menu:
-
-| Command | Description | Example |
-| :--- | :--- | :--- |
-| `minivps menu` | Open interactive TUI management menu | `minivps menu` |
-| `minivps list` | List all active Mini-VPS containers | `minivps list` |
-| `minivps create` | Launch interactive wizard to build a VPS | `minivps create` |
-| `minivps create <args>` | Non-interactive 1-line creation | `minivps create node1 ubuntu:22.04 2 4 32 2222 admin Pass123!` |
-| `minivps info [name]` | Show VPS specs, IP, SSH command & API key | `minivps info minivps` |
-| `minivps status [name]` | Live CPU %, RAM MB, Disk GB and Uptime | `minivps status minivps` |
-| `minivps shell [name]` | Direct 1-click shell login into the VPS | `minivps shell minivps` |
-| `minivps start [name]` | Start a stopped VPS container | `minivps start minivps` |
-| `minivps stop [name]` | Stop a running VPS container | `minivps stop minivps` |
-| `minivps restart [name]` | Reboot / Restart the Mini-VPS | `minivps restart minivps` |
-| `minivps passwd [name] [usr] [pwd]` | Update user or root password | `minivps passwd minivps vpsadmin NewPass!` |
-| `minivps exec [name] "<cmd>"` | Execute shell command inside the VPS | `minivps exec minivps "df -h; uptime"` |
-| `minivps delete [name]` | Permanently delete container and disk pool | `minivps delete node1` |
-| `minivps api` | Print API endpoints and cURL examples | `minivps api` |
+| Short Command | Full Command | Description | Example |
+| :--- | :--- | :--- | :--- |
+| `pk` / `vps` | `minivps menu` | Launch Interactive TUI Menu | `pk` |
+| `pk list` | `minivps list` | List all instances with Bandwidth & Expiry | `pk list` |
+| `pk create` | `minivps create` | Interactive creation wizard | `pk create` |
+| `pk info <name>` | `minivps info <name>` | Show full specs, bandwidth usage & credentials | `pk info minivps` |
+| `pk status <name>` | `minivps status <name>` | Live CPU, RAM, Disk, Uptime & Bandwidth stats | `pk status minivps` |
+| `pk renew <name> <days>` | `minivps renew <name> <days>` | Extend lifespan duration by X days | `pk renew minivps 30` |
+| `pk limit <name> <gb> [spd]` | `minivps limit` | Set Bandwidth Quota and Speed rate limit | `pk limit minivps 200 50Mbit` |
+| `pk shell <name>` | `minivps shell <name>` | 1-Click instant terminal shell inside VPS | `pk shell minivps` |
+| `pk start <name>` | `minivps start <name>` | Start instance | `pk start minivps` |
+| `pk stop <name>` | `minivps stop <name>` | Stop instance | `pk stop minivps` |
+| `pk restart <name>` | `minivps restart <name>` | Reboot / Restart instance | `pk restart minivps` |
+| `pk passwd <name> <usr> <pwd>` | `minivps passwd` | Change user or root password | `pk passwd minivps vpsadmin NewPass123` |
+| `pk exec <name> "<cmd>"` | `minivps exec` | Execute shell command inside VPS | `pk exec minivps "free -h"` |
+| `pk auto-clean` | `minivps auto-clean` | Scan and suspend expired instances | `pk auto-clean` |
+| `pk delete <name>` | `minivps delete <name>` | Destroy instance and free Btrfs storage | `pk delete node1` |
+| `pk api` | `minivps api` | View REST API endpoints and cURL snippets | `pk api` |
 
 ---
 
-## 📡 REST API & Integration
+## 🌐 REST API Reference
 
-Mini-VPS Manager provides a FastAPI service with OpenAPI/Swagger documentation.
+The REST API service runs on port `8090` by default.
 
 * **Base URL:** `http://<YOUR_VPS_IP>:8090`
-* **Swagger UI:** `http://<YOUR_VPS_IP>:8090/docs`
-* **ReDoc:** `http://<YOUR_VPS_IP>:8090/redoc`
+* **Interactive Swagger UI:** `http://<YOUR_VPS_IP>:8090/docs`
 * **Authentication Header:** `X-API-Key: <your_api_key>` (or `?api_key=<your_api_key>`)
 
 ### 📋 API Endpoints
 
-#### 1. Live Resource Status (CPU, RAM, Disk, Uptime)
+#### 1. List Instances with Bandwidth & Expiry
 ```bash
-curl -H "X-API-Key: YOUR_API_KEY" http://YOUR_VPS_IP:8090/api/vps/minivps/status
-```
-**Response:**
-```json
-{
-  "name": "minivps",
-  "status": "RUNNING",
-  "is_running": true,
-  "uptime": "up 15 minutes",
-  "memory": {
-    "total_mb": 4096,
-    "used_mb": 75,
-    "free_mb": 3560,
-    "usage_percent": 1.8
-  },
-  "disk": {
-    "total": "32G",
-    "used": "1.4G",
-    "available": "31G",
-    "usage_percent": "5%"
-  },
-  "internal_ips": [
-    "10.132.53.210"
-  ]
-}
+curl -H "X-API-Key: YOUR_API_KEY" http://YOUR_VPS_IP:8090/api/vps/list
 ```
 
-#### 2. Execute Shell Command via API
+#### 2. Detailed Info & Specs
+```bash
+curl -H "X-API-Key: YOUR_API_KEY" http://YOUR_VPS_IP:8090/api/vps/minivps/info
+```
+
+#### 3. Renew / Extend Lifespan
 ```bash
 curl -X POST -H "X-API-Key: YOUR_API_KEY" \
      -H "Content-Type: application/json" \
-     -d '{"command": "uname -a; uptime"}' \
-     http://YOUR_VPS_IP:8090/api/vps/minivps/exec
+     -d '{"days": 30}' \
+     http://YOUR_VPS_IP:8090/api/vps/minivps/renew
 ```
 
-#### 3. Restart Mini-VPS
+#### 4. Update Bandwidth Quota & Speed
 ```bash
-curl -X POST -H "X-API-Key: YOUR_API_KEY" http://YOUR_VPS_IP:8090/api/vps/minivps/restart
+curl -X POST -H "X-API-Key: YOUR_API_KEY" \
+     -H "Content-Type: application/json" \
+     -d '{"bandwidth_limit_gb": 150, "speed_limit": "50Mbit"}' \
+     http://YOUR_VPS_IP:8090/api/vps/minivps/limit
 ```
 
-#### 4. Create New Mini-VPS via API
+#### 5. Provision New Mini-VPS via API
 ```bash
 curl -X POST -H "X-API-Key: YOUR_API_KEY" \
      -H "Content-Type: application/json" \
      -d '{
-       "name": "worker1",
+       "name": "client-node",
        "os_image": "ubuntu:22.04",
        "cpu": 2,
        "ram_gb": 4,
        "storage_gb": 32,
-       "ssh_port": 2225,
+       "ssh_port": 2223,
        "username": "clientuser",
-       "password": "SecurePassword123!"
+       "password": "SecurePassword123!",
+       "duration_days": 30,
+       "bandwidth_limit_gb": 100,
+       "speed_limit": "100Mbit"
      }' \
      http://YOUR_VPS_IP:8090/api/vps/create
-```
-
-#### 5. Change Password via API
-```bash
-curl -X POST -H "X-API-Key: YOUR_API_KEY" \
-     -H "Content-Type: application/json" \
-     -d '{"username": "vpsadmin", "password": "NewStrongPassword456!"}' \
-     http://YOUR_VPS_IP:8090/api/vps/minivps/user/password
 ```
 
 ---
 
 ## 🔒 Security & Firewall
 
-Ensure the following ports are open in your Cloud Provider's Security Group (AWS, Hetzner, DigitalOcean, Oracle Cloud, etc.):
+Open the following ports in your cloud firewall:
 * **Host SSH:** `22` (TCP)
-* **Mini-VPS SSH:** `2222` (TCP) (or whichever port you configured)
+* **Mini-VPS SSH:** `2222` (TCP) (or any custom port configured)
 * **REST API:** `8090` (TCP)
 
-To configure `ufw` locally:
 ```bash
 sudo ufw allow 2222/tcp
 sudo ufw allow 8090/tcp
@@ -200,17 +205,15 @@ sudo ufw allow 8090/tcp
 
 ---
 
-## 🗑️ Uninstallation
+## 👑 Author & Credits
 
-To remove Mini-VPS Manager and cleanly revert system services:
-```bash
-sudo /home/ubuntu/minivps-manager/uninstall.sh
-```
-
----
-
-## 👤 Author & Support
-* **Developer:** Mohd Khatab
+* **Brand:** Prime Khatab Services
+* **Developer:** Prime Khatab (Mohd Khatab)
 * **Email:** mrkhatab112@gmail.com
 * **GitHub:** [@mohdkhatab](https://github.com/mohdkhatab)
+* **Repository:** [https://github.com/mohdkhatab/minivps-manager](https://github.com/mohdkhatab/minivps-manager)
 * **License:** [MIT License](LICENSE)
+
+<p align="center">
+  <b>Built with ❤️ by Prime Khatab</b>
+</p>
